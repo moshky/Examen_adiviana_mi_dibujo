@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Adivina mi Dibujo</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background: #f0f0f0;
+    padding: 30px;
+  }
+  h1 { margin-bottom: 5px; }
+  #canvas {
+    background: black;
+    border: 3px solid #333;
+    border-radius: 8px;
+    touch-action: none; /* evita que el navegador haga scroll al dibujar con el dedo */
+    cursor: crosshair;
+  }
+  #controles { margin: 15px 0; }
+  button {
+    padding: 8px 16px;
+    font-size: 16px;
+    border: none;
+    border-radius: 6px;
+    background: #444;
+    color: white;
+    cursor: pointer;
+  }
+  #resultados {
+    width: 280px;
+    margin-top: 10px;
+  }
+  .prediccion {
+    margin: 8px 0;
+  }
+  .prediccion-nombre {
+    display: flex;
+    justify-content: space-between;
+    font-weight: bold;
+  }
+  .barra-fondo {
+    background: #ddd;
+    border-radius: 4px;
+    height: 18px;
+    overflow: hidden;
+  }
+  .barra-relleno {
+    background: #4caf50;
+    height: 100%;
+    transition: width 0.2s;
+  }
+</style>
+</head>
+<body>
+
+<h1>Adivina mi Dibujo</h1>
+<p>Dibujá con el mouse o el dedo: cat, house, car, tree, sun</p>
+
+<canvas id="canvas" width="280" height="280"></canvas>
+
+<div id="controles">
+  <button onclick="borrar()">Borrar</button>
+</div>
+
+<div id="resultados"></div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const resultadosDiv = document.getElementById('resultados');
+
+let dibujando = false;
+let ultimoEnvio = 0;
+const INTERVALO_MS = 400; // cada cuánto le preguntamos al backend mientras dibujás
+
+// Fondo negro inicial
+function limpiarCanvas() {
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+limpiarCanvas();
+
+ctx.strokeStyle = 'white';
+ctx.lineWidth = 8;
+ctx.lineCap = 'round';
+ctx.lineJoin = 'round';
+
+function obtenerPosicion(evento) {
+  const rect = canvas.getBoundingClientRect();
+  if (evento.touches && evento.touches.length > 0) {
+    return {
+      x: evento.touches[0].clientX - rect.left,
+      y: evento.touches[0].clientY - rect.top
+    };
+  }
+  return {
+    x: evento.clientX - rect.left,
+    y: evento.clientY - rect.top
+  };
+}
+
+function empezarTrazo(evento) {
+  dibujando = true;
+  const pos = obtenerPosicion(evento);
+  ctx.beginPath();
+  ctx.moveTo(pos.x, pos.y);
+  evento.preventDefault();
+}
+
+function dibujarTrazo(evento) {
+  if (!dibujando) return;
+  const pos = obtenerPosicion(evento);
+  ctx.lineTo(pos.x, pos.y);
+  ctx.stroke();
+  evento.preventDefault();
+
+  // Predicción en tiempo real, con un pequeño intervalo para no saturar
+  const ahora = Date.now();
+  if (ahora - ultimoEnvio > INTERVALO_MS) {
+    ultimoEnvio = ahora;
+    predecir();
+  }
+}
+
+function terminarTrazo() {
+  if (dibujando) {
+    dibujando = false;
+    predecir(); // una última predicción al soltar
+  }
+}
+
+// Mouse
+canvas.addEventListener('mousedown', empezarTrazo);
+canvas.addEventListener('mousemove', dibujarTrazo);
+canvas.addEventListener('mouseup', terminarTrazo);
+canvas.addEventListener('mouseleave', terminarTrazo);
+
+// Touch (celular/tablet)
+canvas.addEventListener('touchstart', empezarTrazo);
+canvas.addEventListener('touchmove', dibujarTrazo);
+canvas.addEventListener('touchend', terminarTrazo);
+
+function borrar() {
+  limpiarCanvas();
+  resultadosDiv.innerHTML = '';
+}
+
+async function predecir() {
+  canvas.toBlob(async (blob) => {
+    const formData = new FormData();
+    formData.append('file', blob, 'dibujo.png');
+
+    try {
+      const respuesta = await fetch('http://127.0.0.1:8000/predecir', {
+        method: 'POST',
+        body: formData
+      });
+      const datos = await respuesta.json();
+      mostrarResultados(datos.predicciones);
+    } catch (error) {
+      resultadosDiv.innerHTML = '<p style="color:red">No se pudo conectar al backend. ¿Está corriendo uvicorn?</p>';
+    }
+  }, 'image/png');
+}
+
+function mostrarResultados(predicciones) {
+  resultadosDiv.innerHTML = predicciones.map(p => `
+    <div class="prediccion">
+      <div class="prediccion-nombre">
+        <span>${p.categoria}</span>
+        <span>${(p.confianza * 100).toFixed(1)}%</span>
+      </div>
+      <div class="barra-fondo">
+        <div class="barra-relleno" style="width:${p.confianza * 100}%"></div>
+      </div>
+    </div>
+  `).join('');
+}
+</script>
+
+</body>
+</html>
